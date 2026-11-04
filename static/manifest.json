@@ -1,0 +1,10 @@
+{
+  "name": "Futbol AI",
+  "short_name": "Futbol AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#101827",
+  "description": "Manuel futbol maç analiz uygulaması",
+  "icons": []
+}
