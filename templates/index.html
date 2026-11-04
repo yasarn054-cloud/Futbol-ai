@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101827">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="stylesheet" href="/static/style.css">
+<title>Futbol AI</title>
+</head>
+<body>
+<main class="wrap">
+<header>
+<div class="logo">⚽</div>
+<div>
+<h1>Futbol AI</h1>
+<p>Manuel maç analiz sistemi</p>
+</div>
+<span class="tag">Pil dostu</span>
+</header>
+
+<section class="panel">
+<label for="date">Analiz tarihi</label>
+<input id="date" type="date" value="{{ today }}">
+<button id="analyze">🔎 ANALİZ ET</button>
+<p class="muted">Yalnızca butona bastığında maç verisi çekilir.</p>
+</section>
+
+<div id="message" class="message">
+Analiz için tarih seç ve butona bas.
+</div>
+
+<section id="results"></section>
+
+<footer>
+Tahminler kesin sonuç veya kazanç garantisi vermez.
+</footer>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
