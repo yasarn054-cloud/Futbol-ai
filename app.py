@@ -2,12 +2,14 @@ import os
 import math
 import time
 import requests
+from datetime import date, timedelta
 from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 
 API_KEY = os.getenv("API_FOOTBALL_KEY")
 API_URL = "https://v3.football.api-sports.io"
+
 CACHE = {}
 CACHE_TIME = 900
 
@@ -16,7 +18,8 @@ def api_get(endpoint, params=None):
     if not API_KEY:
         raise Exception("API_FOOTBALL_KEY ayarlanmamış.")
 
-    key = (endpoint, str(sorted((params or {}).items())))
+    params = params or {}
+    key = (endpoint, tuple(sorted(params.items())))
     now = time.time()
 
     if key in CACHE:
@@ -27,8 +30,8 @@ def api_get(endpoint, params=None):
     response = requests.get(
         API_URL + endpoint,
         headers={"x-apisports-key": API_KEY},
-        params=params or {},
-        timeout=20
+        params=params,
+        timeout=25
     )
 
     if response.status_code == 401:
@@ -36,7 +39,7 @@ def api_get(endpoint, params=None):
     if response.status_code == 403:
         raise Exception("API erişimi reddedildi.")
     if response.status_code == 429:
-        raise Exception("API günlük istek limitine ulaşıldı.")
+        raise Exception("Günlük API istek limitine ulaşıldı.")
 
     response.raise_for_status()
     data = response.json()
@@ -60,13 +63,14 @@ def health():
 
 @app.route("/api/fixtures")
 def fixtures():
-    date = request.args.get("date")
+    selected_date = request.args.get("date")
 
-    if not date:
+    if not selected_date:
         return jsonify({"error": "Tarih belirtilmedi."}), 400
 
     try:
-        data = api_get("/fixtures", {"date": date})
+        data = api_get("/fixtures", {"date": selected_date})
+
         matches = []
 
         for item in data.get("response", []):
@@ -96,20 +100,53 @@ def fixtures():
 
 
 def get_team_stats(team_id):
-    data = api_get(
-        "/fixtures",
-        {
-            "team": team_id,
-            "last": 10,
-            "status": "FT"
-        }
+    today = date.today()
+    start = today - timedelta(days=120)
+
+    params = {
+        "team": team_id,
+        "from": start.isoformat(),
+        "to": today.isoformat(),
+        "season": today.year,
+        "status": "FT",
+        "timezone": "Europe/Istanbul"
+    }
+
+    data = api_get("/fixtures", params)
+    matches = data.get("response", [])
+
+    # Diğer sayfaları da al
+    paging = data.get("paging", {})
+    total_pages = int(paging.get("total", 1))
+
+    for page in range(2, total_pages + 1):
+        page_params = dict(params)
+        page_params["page"] = page
+
+        extra = api_get("/fixtures", page_params)
+        matches.extend(extra.get("response", []))
+
+    # Tekrarlanan maçları temizle
+    unique_matches = {}
+
+    for match in matches:
+        unique_matches[match["fixture"]["id"]] = match
+
+    matches = list(unique_matches.values())
+
+    # En yeni 10 tamamlanmış maçı seç
+    matches.sort(
+        key=lambda m: m["fixture"]["date"],
+        reverse=True
     )
 
-    matches = data.get("response", [])
+    matches = matches[:10]
 
     scored = []
     conceded = []
-    wins = draws = losses = 0
+    wins = 0
+    draws = 0
+    losses = 0
 
     for match in matches:
         goals = match.get("goals", {})
@@ -125,6 +162,7 @@ def get_team_stats(team_id):
         if team_id == home_id:
             scored.append(home_goals)
             conceded.append(away_goals)
+
             if home_goals > away_goals:
                 wins += 1
             elif home_goals == away_goals:
@@ -134,6 +172,7 @@ def get_team_stats(team_id):
         else:
             scored.append(away_goals)
             conceded.append(home_goals)
+
             if away_goals > home_goals:
                 wins += 1
             elif away_goals == home_goals:
@@ -159,8 +198,11 @@ def poisson_probability(lam, goals):
 
 
 def calculate_probabilities(home_xg, away_xg):
-    home_win = draw = away_win = 0
-    over_25 = btts = 0
+    home_win = 0
+    draw = 0
+    away_win = 0
+    over_25 = 0
+    btts = 0
 
     for h in range(9):
         for a in range(9):
@@ -201,8 +243,13 @@ def analyze():
         else:
             body = request.args
 
-        home_id = int(body.get("home_id") or body.get("home_team_id"))
-        away_id = int(body.get("away_id") or body.get("away_team_id"))
+        home_id = int(
+            body.get("home_id") or body.get("home_team_id")
+        )
+
+        away_id = int(
+            body.get("away_id") or body.get("away_team_id")
+        )
 
         home = get_team_stats(home_id)
         away = get_team_stats(away_id)
@@ -221,7 +268,8 @@ def analyze():
         away_xg = max(0.15, min(away_xg, 4.5))
 
         probabilities = calculate_probabilities(
-            home_xg, away_xg
+            home_xg,
+            away_xg
         )
 
         return jsonify({
@@ -236,7 +284,11 @@ def analyze():
                 "away": round(away_xg, 2)
             },
             "probabilities": probabilities,
-            "note": "Tahminler son 10 maçın gol istatistiklerine dayalıdır. Kesin sonuç garantisi değildir."
+            "note": (
+                "Tahminler takımların son 10 tamamlanmış "
+                "maçındaki gol istatistiklerine dayanır. "
+                "Kesin sonuç garantisi değildir."
+            )
         })
 
     except Exception as e:
@@ -246,3 +298,4 @@ def analyze():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+            
