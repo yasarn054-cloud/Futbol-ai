@@ -1,41 +1,74 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#101827">
-<link rel="manifest" href="/static/manifest.json">
-<link rel="stylesheet" href="/static/style.css">
-<title>Futbol AI</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#08111f">
+    <title>Futbol AI</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<main class="wrap">
-<header>
-<div class="logo">⚽</div>
-<div>
-<h1>Futbol AI</h1>
-<p>Manuel maç analiz sistemi</p>
-</div>
-<span class="tag">Pil dostu</span>
-</header>
+    <header class="header">
+        <div class="brand">
+            <div class="brand-icon">⚽</div>
+            <div>
+                <h1>FUTBOL <span>AI</span></h1>
+                <p>Akıllı maç analiz merkezi</p>
+            </div>
+        </div>
+        <div class="status"><span></span> Sistem hazır</div>
+    </header>
 
-<section class="panel">
-<label for="date">Analiz tarihi</label>
-<input id="date" type="date" value="{{ today }}">
-<button id="analyze">🔎 ANALİZ ET</button>
-<p class="muted">Yalnızca butona bastığında maç verisi çekilir.</p>
-</section>
+    <main class="container">
+        <section class="hero">
+            <div class="hero-tag">⚡ VERİ ODAKLI ANALİZ</div>
+            <h2>Maçları keşfet.<br><span>Verileri analiz et.</span></h2>
+            <p>Takımların son 10 maç performansına göre olasılık tahminleri.</p>
+        </section>
 
-<div id="message" class="message">
-Analiz için tarih seç ve butona bas.
-</div>
+        <section class="panel">
+            <div class="section-heading">
+                <div>
+                    <h3>📅 Maç merkezi</h3>
+                    <p>Günün karşılaşmalarını listele</p>
+                </div>
+            </div>
 
-<section id="results"></section>
+            <div class="date-row">
+                <input type="date" id="matchDate">
+                <button id="loadMatches">Maçları getir</button>
+            </div>
 
-<footer>
-Tahminler kesin sonuç veya kazanç garantisi vermez.
-</footer>
-</main>
-<script src="/static/app.js"></script>
+            <div class="search-wrap">
+                <span>⌕</span>
+                <input id="searchInput" type="search" placeholder="Takım veya lig ara...">
+            </div>
+
+            <div id="matchCount" class="muted">Henüz maç yüklenmedi.</div>
+            <div id="matches" class="matches">
+                <div class="empty">Maçları görmek için yukarıdaki butona bas.</div>
+            </div>
+        </section>
+
+        <section class="panel analysis-panel" id="analysisPanel">
+            <div class="section-heading">
+                <div>
+                    <h3>📊 Maç analizi</h3>
+                    <p>Son 10 maçın istatistiksel değerlendirmesi</p>
+                </div>
+            </div>
+            <div id="analysisResult">
+                <div class="empty">Analiz etmek istediğin maçta “Maçı analiz et” seçeneğine bas.</div>
+            </div>
+        </section>
+
+        <footer>
+            <p>FUTBOL AI · İstatistiksel tahmin platformu</p>
+            <small>Tahminler kesin sonuç değildir. Bahis tavsiyesi verilmez.</small>
+        </footer>
+    </main>
+
+    <script src="/static/app.js"></script>
 </body>
 </html>
