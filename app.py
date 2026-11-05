@@ -1,156 +1,248 @@
 import os
 import math
+import time
 import requests
-from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 
 API_KEY = os.getenv("API_FOOTBALL_KEY")
 API_URL = "https://v3.football.api-sports.io"
+CACHE = {}
+CACHE_TIME = 900
 
 
-def poisson(lam, goals):
-    return (math.exp(-lam) * lam ** goals) / math.factorial(goals)
+def api_get(endpoint, params=None):
+    if not API_KEY:
+        raise Exception("API_FOOTBALL_KEY ayarlanmamış.")
 
+    key = (endpoint, str(sorted((params or {}).items())))
+    now = time.time()
 
-def analyze_match(home, away):
-    home_xg = 1.42
-    away_xg = 1.12
+    if key in CACHE:
+        saved_time, saved_data = CACHE[key]
+        if now - saved_time < CACHE_TIME:
+            return saved_data
 
-    home_probs = [poisson(home_xg, i) for i in range(8)]
-    away_probs = [poisson(away_xg, i) for i in range(8)]
+    response = requests.get(
+        API_URL + endpoint,
+        headers={"x-apisports-key": API_KEY},
+        params=params or {},
+        timeout=20
+    )
 
-    p_home = p_draw = p_away = 0
-    p_over = p_btts = 0
+    if response.status_code == 401:
+        raise Exception("API anahtarı geçersiz.")
+    if response.status_code == 403:
+        raise Exception("API erişimi reddedildi.")
+    if response.status_code == 429:
+        raise Exception("API günlük istek limitine ulaşıldı.")
 
-    for h in range(8):
-        for a in range(8):
-            probability = home_probs[h] * away_probs[a]
+    response.raise_for_status()
+    data = response.json()
 
-            if h > a:
-                p_home += probability
-            elif h == a:
-                p_draw += probability
-            else:
-                p_away += probability
+    if data.get("errors"):
+        raise Exception(str(data["errors"]))
 
-            if h + a >= 3:
-                p_over += probability
-
-            if h > 0 and a > 0:
-                p_btts += probability
-
-    values = {
-        "home": round(p_home * 100),
-        "draw": round(p_draw * 100),
-        "away": round(p_away * 100),
-        "over25": round(p_over * 100),
-        "under25": round((1 - p_over) * 100),
-        "btts": round(p_btts * 100)
-    }
-
-    picks = {
-        "1": values["home"],
-        "X": values["draw"],
-        "2": values["away"]
-    }
-
-    pick = max(picks, key=picks.get)
-
-    return {
-        "p": values,
-        "pick": pick,
-        "confidence": picks[pick]
-    }
+    CACHE[key] = (now, data)
+    return data
 
 
 @app.route("/")
 def index():
-    return render_template(
-        "index.html",
-        today=datetime.now().strftime("%Y-%m-%d")
-    )
+    return render_template("index.html")
 
 
-@app.route("/api/analyze", methods=["POST"])
-def api_analyze():
-    if not API_KEY:
-        return jsonify({
-            "ok": False,
-            "error": "API anahtarı sunucuya eklenmemiş."
-        }), 500
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 
-    data = request.get_json(silent=True) or {}
-    selected_date = data.get("date")
+
+@app.route("/api/fixtures")
+def fixtures():
+    date = request.args.get("date")
+
+    if not date:
+        return jsonify({"error": "Tarih belirtilmedi."}), 400
 
     try:
-        datetime.strptime(selected_date, "%Y-%m-%d")
-    except (ValueError, TypeError):
-        return jsonify({
-            "ok": False,
-            "error": "Geçerli bir tarih seç."
-        }), 400
-
-    try:
-        response = requests.get(
-            f"{API_URL}/fixtures",
-            headers={"x-apisports-key": API_KEY},
-            params={
-                "date": selected_date,
-                "timezone": "Europe/Istanbul"
-            },
-            timeout=30
-        )
-
-        response.raise_for_status()
-        result = response.json()
-
-        if result.get("errors"):
-            return jsonify({
-                "ok": False,
-                "error": "API hatası: " + str(result["errors"])
-            }), 502
-
+        data = api_get("/fixtures", {"date": date})
         matches = []
 
-        for item in result.get("response", []):
+        for item in data.get("response", []):
             fixture = item["fixture"]
             teams = item["teams"]
             league = item["league"]
 
-            analysis = analyze_match(
-                teams["home"]["name"],
-                teams["away"]["name"]
-            )
-
-            analysis.update({
-                "home": teams["home"]["name"],
-                "away": teams["away"]["name"],
+            matches.append({
+                "id": fixture["id"],
+                "date": fixture["date"],
+                "time": fixture["date"][11:16],
+                "status": fixture["status"]["short"],
+                "home_team": teams["home"]["name"],
+                "away_team": teams["away"]["name"],
+                "home_team_id": teams["home"]["id"],
+                "away_team_id": teams["away"]["id"],
+                "home_logo": teams["home"]["logo"],
+                "away_logo": teams["away"]["logo"],
                 "league": league["name"],
-                "country": league["country"],
-                "time": fixture["date"][11:16]
+                "country": league["country"]
             })
 
-            matches.append(analysis)
+        return jsonify({"fixtures": matches})
 
-        matches.sort(
-            key=lambda match: match["confidence"],
-            reverse=True
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def get_team_stats(team_id):
+    data = api_get(
+        "/fixtures",
+        {
+            "team": team_id,
+            "last": 10,
+            "status": "FT"
+        }
+    )
+
+    matches = data.get("response", [])
+
+    scored = []
+    conceded = []
+    wins = draws = losses = 0
+
+    for match in matches:
+        goals = match.get("goals", {})
+        teams = match.get("teams", {})
+
+        home_id = teams["home"]["id"]
+        home_goals = goals.get("home")
+        away_goals = goals.get("away")
+
+        if home_goals is None or away_goals is None:
+            continue
+
+        if team_id == home_id:
+            scored.append(home_goals)
+            conceded.append(away_goals)
+            if home_goals > away_goals:
+                wins += 1
+            elif home_goals == away_goals:
+                draws += 1
+            else:
+                losses += 1
+        else:
+            scored.append(away_goals)
+            conceded.append(home_goals)
+            if away_goals > home_goals:
+                wins += 1
+            elif away_goals == home_goals:
+                draws += 1
+            else:
+                losses += 1
+
+    if not scored:
+        raise Exception("Takımın son maç verileri bulunamadı.")
+
+    return {
+        "played": len(scored),
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "scored": round(sum(scored) / len(scored), 2),
+        "conceded": round(sum(conceded) / len(conceded), 2)
+    }
+
+
+def poisson_probability(lam, goals):
+    return (math.exp(-lam) * lam ** goals) / math.factorial(goals)
+
+
+def calculate_probabilities(home_xg, away_xg):
+    home_win = draw = away_win = 0
+    over_25 = btts = 0
+
+    for h in range(9):
+        for a in range(9):
+            probability = (
+                poisson_probability(home_xg, h) *
+                poisson_probability(away_xg, a)
+            )
+
+            if h > a:
+                home_win += probability
+            elif h == a:
+                draw += probability
+            else:
+                away_win += probability
+
+            if h + a >= 3:
+                over_25 += probability
+
+            if h > 0 and a > 0:
+                btts += probability
+
+    return {
+        "home_win": round(home_win * 100, 1),
+        "draw": round(draw * 100, 1),
+        "away_win": round(away_win * 100, 1),
+        "over_25": round(over_25 * 100, 1),
+        "under_25": round((1 - over_25) * 100, 1),
+        "btts_yes": round(btts * 100, 1),
+        "btts_no": round((1 - btts) * 100, 1)
+    }
+
+
+@app.route("/api/analyze", methods=["GET", "POST"])
+def analyze():
+    try:
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+        else:
+            body = request.args
+
+        home_id = int(body.get("home_id") or body.get("home_team_id"))
+        away_id = int(body.get("away_id") or body.get("away_team_id"))
+
+        home = get_team_stats(home_id)
+        away = get_team_stats(away_id)
+
+        home_xg = (
+            home["scored"] * 0.60 +
+            away["conceded"] * 0.40
+        )
+
+        away_xg = (
+            away["scored"] * 0.60 +
+            home["conceded"] * 0.40
+        )
+
+        home_xg = max(0.15, min(home_xg, 4.5))
+        away_xg = max(0.15, min(away_xg, 4.5))
+
+        probabilities = calculate_probabilities(
+            home_xg, away_xg
         )
 
         return jsonify({
-            "ok": True,
-            "count": len(matches),
-            "matches": matches
+            "home": home,
+            "away": away,
+            "home_stats": home,
+            "away_stats": away,
+            "home_xg": round(home_xg, 2),
+            "away_xg": round(away_xg, 2),
+            "xg": {
+                "home": round(home_xg, 2),
+                "away": round(away_xg, 2)
+            },
+            "probabilities": probabilities,
+            "note": "Tahminler son 10 maçın gol istatistiklerine dayalıdır. Kesin sonuç garantisi değildir."
         })
 
-    except requests.RequestException:
-        return jsonify({
-            "ok": False,
-            "error": "Maç verileri alınamadı. Daha sonra tekrar dene."
-        }), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
